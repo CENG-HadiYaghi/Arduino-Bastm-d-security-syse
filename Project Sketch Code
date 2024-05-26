@@ -1,0 +1,311 @@
+#include <Keypad.h>
+#include <Wire.h> // Include the Wire library for I2C communication
+#include <LiquidCrystal_I2C.h>
+#include <Servo.h> // Include the servo library
+
+const byte ROW_NUM = 4; // Four rows
+const byte COL_NUM = 4; // Four columns
+
+char keys[ROW_NUM][COL_NUM] = { {'1', '2', '3', }, {'4', '5', '6', }, {'7', '8', '9', }, {'*', '0', '#', } };
+
+byte pin_rows[ROW_NUM] = { A0, A1, A2, A3}; // Connect keypad ROW0, ROW1, ROW2 and ROW3 to these Arduino pins.
+byte pin_column[COL_NUM] = {5, 4, 3,}; // Connect keypad COL0, COL1, COL2 and COL3 to these Arduino pins.
+
+Keypad customKeypad = Keypad( makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COL_NUM );
+
+const int ledPin = 13;
+const int buzzerPin = 8; // Add a buzzer pin
+const int servoPin = 2; // Servo control pin
+const int echoPin = 10; // Ultrasonic sensor echo pin
+const int triggerPin = 11; // Ultrasonic sensor trigger pin
+const int buttonPin = 12; // Push button pin
+const int deleteButtonPin = 7; // Push button to delete character
+const int ledpin2 = 9;
+
+Servo myServo; // Create a servo object
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Initialize the I2C LCD module
+
+char userIDs[3][9] = {"123456", "456372", "636173"}; // Increase size to accommodate full IDs
+int accessDeniedCount = 0;
+int consecutiveButtonPresses = 0; // Count consecutive button presses without ID entry
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(ledPin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP); // Set the push button pin as INPUT_PULLUP
+  pinMode(deleteButtonPin, INPUT_PULLUP); // Set the delete button pin as INPUT_PULLUP
+  pinMode(buzzerPin, OUTPUT); // Initialize the buzzer pin
+  myServo.attach(servoPin); // Attach the servo to its pin
+  lcd.init(); // Initialize the LCD module
+  lcd.backlight(); // Turn on the LCD backlight
+
+  // Print the welcome message
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Welcome!");
+  lcd.setCursor(0, 1);
+  lcd.print("Enter your ID:");
+}
+
+void loop() {
+  char customKey = customKeypad.getKey();
+  bool buttonPressed = digitalRead(buttonPin) == LOW; // Check if the button is pressed
+  bool deleteButtonPressed = digitalRead(deleteButtonPin) == LOW; // Check if the delete button is pressed
+  
+  static char inputId[9]; // Increase size to accommodate full IDs
+  static int inputIndex = 0; // Create a static variable to keep track of the index
+
+  // Check if a person is detected within 0 to 100 cm range
+  int distance = getDistance();
+  
+  if (distance >= 0 && distance <= 100) {
+     lcd.backlight();
+     digitalWrite(ledpin2, HIGH);// Turn on the LCD backlight
+   } else {
+     lcd.noBacklight(); 
+     digitalWrite(ledpin2, LOW);// Turn off the LCD backlight
+   }
+  
+
+  if (customKey && customKey != '#') {
+    Serial.print(customKey);
+
+    // Clear the welcome message
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Enter your ID:");
+
+    // Add the customKey to the inputId array
+    inputId[inputIndex++] = customKey;
+
+    // Display the entered ID on the LCD screen
+    lcd.setCursor(0, 1); // Set cursor to the first position of the second line
+    lcd.print(inputId);
+    
+
+
+    consecutiveButtonPresses = 0; // Reset consecutive button presses count
+  }
+
+  // Check if the push button is pressed
+  if (buttonPressed) {
+    delay(50); // Debounce delay
+    
+    // Check if the button is still pressed after debounce
+    if (digitalRead(buttonPin) == HIGH) {
+      if (inputIndex == 0) { // If no ID is entered
+        consecutiveButtonPresses++; // Increment consecutive button presses count
+        if (consecutiveButtonPresses == 1 || consecutiveButtonPresses == 2) {
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("Checking...");
+          delay(2000);
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("Invalid ID");
+          delay(2000);
+          lcd.clear();
+          lcd.setCursor(0,0);
+          lcd.print("Enter your ID");
+        } else if (consecutiveButtonPresses == 3) {
+            lockSystem();
+        }
+      } else {
+        // Null-terminate the string
+        inputId[inputIndex] = '\0';
+        inputIndex = 0; // Reset the input index
+
+        lcd.clear(); // Clear the LCD screen
+        lcd.setCursor(0, 0); // Set the cursor to the first row
+        lcd.print("Checking..."); // Display the checking message
+        delay(2000); // Wait for 1 second
+
+        // Check if the entered ID matches any stored user ID
+        bool accessGranted = false;
+        for (int i = 0; i < sizeof(userIDs) / sizeof(userIDs[0]); i++) {
+          if (strcmp(inputId, userIDs[i]) == 0) {
+            accessGranted = true;
+            break;
+          }
+        }
+
+        if (accessGranted) {
+            // Access granted, turn on the LED
+    digitalWrite(ledPin, HIGH);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Access Granted!");
+    myServo.write(90);
+    delay(3000);
+    myServo.write(0);
+    delay(1000);
+    digitalWrite(ledPin, LOW);
+    delay(1000);
+    myServo.write(90);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    
+
+    lcd.print("Welcome!");
+    delay(5000);
+    lcd.setCursor(0,0);
+    lcd.print("Enter your ID");
+    
+    
+   
+
+     while (true) {
+          customKey = customKeypad.getKey();
+          if (customKey) {
+            
+            if (customKey != '#') {
+              // Clear previous ID display
+              lcd.setCursor(0,0);
+              lcd.print("Enter your ID");
+
+              lcd.setCursor(0, 1);
+              for (int i = 0; i < inputIndex; i++) {
+                lcd.print("       "); // Print spaces to clear old ID
+              }
+
+              // Reset input variables
+              inputIndex = 0;
+              memset(inputId, 0, sizeof(inputId));
+               // Clear inputId array
+
+              // Start accepting new ID
+              inputId[inputIndex++] = customKey;
+              delay(10);
+              // lcd.clear();
+              lcd.setCursor(0, 1);
+              lcd.print(inputId);
+              break;
+            }
+            accessDeniedCount=0;
+          }
+          delay(100); // Delay to avoid rapid key presses
+        }
+      }
+      
+
+      else {
+          tone(buzzerPin, 1000, 1000);
+          delay(2000);
+          tone(buzzerPin, 1000, 1000);
+          accessDeniedCount++;
+  // Sound the buzzer for 2 seconds
+          lcd.clear(); // Clear the LCD screen
+          lcd.setCursor(0, 0); // Set the cursor to the first row
+          lcd.print("Access Denied!"); // Print the access denied message
+          delay(2000); 
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("Enter your ID");
+             if (accessDeniedCount == 3){
+                lockSystem();
+             }
+             while (true) {
+          customKey = customKeypad.getKey();
+          if (customKey) {
+            
+            if (customKey != '#') {
+              // Clear previous ID display
+              lcd.setCursor(0,0);
+              lcd.print("Enter your ID");
+
+              lcd.setCursor(0, 1);
+              for (int i = 0; i < inputIndex; i++) {
+                lcd.print("       "); // Print spaces to clear old ID
+              }
+
+              // Reset input variables
+              inputIndex = 0;
+              memset(inputId, 0, sizeof(inputId));
+               // Clear inputId array
+
+              // Start accepting new ID
+              inputId[inputIndex++] = customKey;
+              delay(10);
+              // lcd.clear();
+              lcd.setCursor(0, 1);
+              lcd.print(inputId);
+              break;
+            }
+            
+          }
+          delay(100); // Delay to avoid rapid key presses
+        }
+                lcd.clear();
+               lcd.setCursor(0, 0);
+ lcd.print("Enter your ID:");
+
+ }
+    }
+  }
+  
+
+  // Check if the delete button is pressed
+  if (deleteButtonPressed) {
+    delay(50); // Debounce delay
+    
+    // Check if the button is still pressed after debounce
+    if (digitalRead(deleteButtonPin) == HIGH) {
+      if (inputIndex > 0) {
+        inputIndex--; // Decrement the input index
+        inputId[inputIndex] = '\0'; // Null-terminate the string to delete the character
+        lcd.setCursor(inputIndex, 1); // Set cursor to the correct position
+        lcd.print(" "); // Clear the last entered character on the LCD screen
+      }
+    }
+  }
+}
+
+}
+void lockSystem() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("System Locked");
+    delay(2000);
+    lcd.clear();
+    lcd.noBacklight();
+    digitalWrite(ledpin2, LOW);
+    tone(buzzerPin, 1000, 30000); // Turn on the buzzer for 30 seconds
+
+    // Loop until the '*' key is pressed
+    while (true) {
+        char customKey = customKeypad.getKey(); // Assuming customKeypad is your keypad object
+        if (customKey == '*') {
+            tone(buzzerPin, 0,10000000);
+            delay(1000); // Turn off the buzzer
+            lcd.backlight();
+            lcd.setCursor(0, 0);
+            lcd.print("Welcome Back!");
+            delay(2000); // Display "Welcome Back!" for 2 seconds
+            lcd.clear();
+            lcd.setCursor(0,0 );
+            lcd.print("Enter Your ID :");
+
+            consecutiveButtonPresses = 0; // Reset consecutive button presses count
+            break; // Exit the loop
+        }
+    }
+}
+
+int getDistance() {
+  long duration;
+  int distance;
+  
+  pinMode(triggerPin, OUTPUT);
+  digitalWrite(triggerPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(triggerPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(triggerPin, LOW);
+  
+  pinMode(echoPin, INPUT);
+  duration = pulseIn(echoPin, HIGH);
+  
+  distance = duration * 0.034 / 2;
+  
+  return distance;
+}
